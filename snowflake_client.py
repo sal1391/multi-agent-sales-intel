@@ -10,6 +10,8 @@ Metrics are computed side-by-side for two periods:
   - prior_year : full prior calendar year (Jan 1 - Dec 31 of last year)
   - ytd        : current calendar year-to-date (Jan 1 of this year - today)
 """
+import math
+import os
 from datetime import date
 import streamlit as st
 import pandas as pd
@@ -134,6 +136,49 @@ def _coalesce_metrics(row):
 
 
 # =============================================================================
+# DEMO-MODE DISPLAY SANITIZATION
+# =============================================================================
+# DEPLOY_MODE=="demo" ships with synthetic data (see generate_fake_data.py);
+# these helpers round the headline VOLUME/GP/MARGIN figures shown in the UI
+# to clean numbers ("Sanitized Data") so they never look like a leaked real
+# customer figure. Never applied outside demo mode -- local/aws always see
+# the exact SQL aggregates.
+def _round_sig(x, digits: int = 2):
+    """Round a number to `digits` significant figures.
+
+    Examples: 10_673_296 -> 11_000_000 ; 42_871 -> 43_000. Zero, None, and
+    NaN pass through unchanged (there's nothing meaningful to round).
+    """
+    if x is None:
+        return x
+    try:
+        xf = float(x)
+    except (TypeError, ValueError):
+        return x
+    if xf == 0 or math.isnan(xf) or math.isinf(xf):
+        return x
+    # String-format ("g") rounding avoids the classic log10() floating-point
+    # edge cases (e.g. log10(100) landing a hair under 2.0) that a
+    # magnitude-and-scale implementation would need to guard against.
+    return float(f"{xf:.{digits}g}")
+
+
+def _sanitize_metrics(m: dict) -> dict:
+    """Demo-mode-only: round VOLUME and GP to 2 significant figures and
+    recompute MARGIN from the rounded values (never sum/average a raw
+    margin column -- same rule as _METRICS_SELECT_SQL). NUM_WON /
+    NUM_INQUIRIES / NUM_LOST are real counts and pass through untouched, as
+    does any other key (e.g. PORT, error) already on the dict."""
+    out = dict(m)
+    vol = _round_sig(out.get("VOLUME"))
+    gp = _round_sig(out.get("GP"))
+    out["VOLUME"] = vol
+    out["GP"] = gp
+    out["MARGIN"] = round(gp / vol, 2) if vol else 0.0
+    return out
+
+
+# =============================================================================
 # SESSION & CORTEX
 # =============================================================================
 def get_snowflake_session():
@@ -161,7 +206,17 @@ def call_cortex_complete(session, prompt, model="claude-sonnet-4-5"):
 # QUERY FUNCTIONS
 # =============================================================================
 def get_all_company_names(session):
-    """Return distinct CUSTOMER_NAME values from the marine sales planning view."""
+    """Return distinct CUSTOMER_NAME values from the marine sales planning view.
+
+    Demo mode only: the full list is further filtered down to companies that
+    have a baked research file under demo_research/ (see agents/researcher.py
+    -- DEMO_RESEARCH_DIR / _slug), so every dropdown entry serves saved
+    research rather than falling through to the offline stand-in analyst.
+    If that filtering fails for any reason, or removes every company (no
+    baked files present at all), the unfiltered list is returned instead --
+    an empty dropdown would brick the demo. Sort order (SQL ORDER BY 1) is
+    preserved either way. local/aws are untouched.
+    """
     sql = f"""
         SELECT DISTINCT CUSTOMER_NAME AS COMPANY_NAME
         FROM {TABLE_FQN}
@@ -170,10 +225,24 @@ def get_all_company_names(session):
     """
     try:
         df = session.sql(sql).to_pandas()
-        return df["COMPANY_NAME"].tolist()
+        names = df["COMPANY_NAME"].tolist()
     except Exception as e:
         st.error(f"Failed to load company names: {e}")
         return []
+
+    if DEPLOY_MODE == "demo":
+        try:
+            from agents.researcher import DEMO_RESEARCH_DIR, _slug
+            baked_only = [
+                name for name in names
+                if os.path.isfile(os.path.join(DEMO_RESEARCH_DIR, f"{_slug(name)}.md"))
+            ]
+            if baked_only:
+                names = baked_only
+        except Exception:
+            pass
+
+    return names
 
 
 def get_customer_metrics(session, company_name):
@@ -205,6 +274,8 @@ def get_customer_metrics(session, company_name):
             out[key] = _coalesce_metrics(row)
         except Exception as e:
             out[key] = {"error": str(e), **_empty_metrics()}
+        if DEPLOY_MODE == "demo":
+            out[key] = _sanitize_metrics(out[key])
     return out
 
 
@@ -234,9 +305,15 @@ def get_top5_ports(session, company_name):
         """
         try:
             df = session.sql(sql).to_pandas()
-            out[key] = df.to_dict("records") if not df.empty else []
+            rows = df.to_dict("records") if not df.empty else []
         except Exception as e:
-            out[key] = {"error": str(e)}
+            rows = {"error": str(e)}
+        if DEPLOY_MODE == "demo" and isinstance(rows, list):
+            # Sanitize each row's VOLUME/GP/MARGIN in place; ordering is
+            # left exactly as returned by the ORDER BY VOLUME DESC above --
+            # never re-sort after rounding.
+            rows = [_sanitize_metrics(r) for r in rows]
+        out[key] = rows
     return out
 
 

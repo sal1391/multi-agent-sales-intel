@@ -10,6 +10,15 @@ workbook via ``derive_seed_stats()``. A rounded, embedded snapshot
 (``SEED_STATS``) is used whenever that workbook is unavailable (CI, other
 machines) -- the script prints which source it used.
 
+After the per-row generation pass, ``_apply_volume_scale()`` multiplies every
+row's VOLUME_TONS by the module constant ``VOLUME_SCALE`` (GROSS_PROFIT is
+left untouched) so headline period volumes read as clean millions-of-tons
+figures in the demo UI. This is purely a display-scale choice for the
+"Sanitized Data" demo presentation -- it makes the CSV's raw per-row
+GP/VOLUME_TONS ratio ``VOLUME_SCALE``x below a realistic bunker-fuel USD/ton
+margin, which is intentional and never surfaced directly (see
+``snowflake_client.py``'s demo-mode MARGIN recomputation).
+
 PRIVACY: the TM1 workbook's BROKER column holds real employee names and its
 COMPANY column holds real corporate entities. Neither this module's source
 nor its CSV output ever contains a raw OFFICE/BROKER/COMPANY string from that
@@ -48,6 +57,13 @@ DEFAULT_OUT = REPO_ROOT / "demo_data" / "sales_actuals.csv"
 SHEET_NAME = "tm1_2024_2026_with_dims"
 SEED = 42
 N_ROWS_TARGET = 20_000
+# Post-hoc multiplier applied to VOLUME_TONS after row generation (see
+# _apply_volume_scale) -- purely a demo-display scale-up so headline
+# Volume figures land in the millions of tons. GROSS_PROFIT is never
+# touched, so this also divides the CSV's raw per-row GP/VOLUME_TONS ratio
+# by VOLUME_SCALE (roughly 0.16-1.4 USD/ton instead of ~4-35 USD/ton); that
+# lower "raw" ratio is intentional and is never shown to users directly.
+VOLUME_SCALE = 25
 
 CSV_COLUMNS = [
     "LIFT_ID",
@@ -460,7 +476,9 @@ def extend_monthly_weights(stats: dict) -> dict:
 def _tons_sigma(amount_scale: dict) -> float:
     """Derive a lognormal sigma for tonnage from the shape of the real
     dollar-amount distribution (p75/p50 ratio), clipped to a range that
-    keeps most stems in a plausible ~100-5,000 ton bunker window."""
+    keeps most pre-scale stems in a plausible ~100-5,000 ton bunker window
+    (final CSV VOLUME_TONS is VOLUME_SCALE times larger -- see
+    _apply_volume_scale)."""
     p50 = amount_scale["p50"]
     p75 = amount_scale["p75"]
     ratio = max(p75 / p50, 1.01)
@@ -672,6 +690,20 @@ def generate_rows(stats: dict, dims: dict, rng: np.random.Generator) -> pd.DataF
     return df[CSV_COLUMNS]
 
 
+def _apply_volume_scale(df: pd.DataFrame) -> pd.DataFrame:
+    """Post-hoc, deterministic scale-up (no new RNG draws) so headline
+    period volumes land in the millions of tons for the demo UI -- see
+    VOLUME_SCALE. Applied uniformly to every row: lost rows are already 0
+    tons so they're unaffected, and GROSS_PROFIT is left untouched.
+    Storyline *ratios* (Maersk win-rate drop, CMA CGM Singapore share,
+    Hapag-Lloyd margin compression, Carnival seasonality, Frontline stem
+    size/margin) are invariant under this uniform multiply, so
+    _validate_storylines() still holds after scaling."""
+    df = df.copy()
+    df["VOLUME_TONS"] = (df["VOLUME_TONS"] * VOLUME_SCALE).round(2)
+    return df
+
+
 # =============================================================================
 # VALIDATION
 # =============================================================================
@@ -804,6 +836,7 @@ def main(argv=None) -> pd.DataFrame:
     rng = np.random.default_rng(SEED)
     dims = build_dimensions(rng)
     df = generate_rows(stats, dims, rng)
+    df = _apply_volume_scale(df)
     validate(df)
 
     out_path = Path(args.out)

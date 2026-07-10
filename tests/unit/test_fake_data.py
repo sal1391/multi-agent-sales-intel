@@ -17,7 +17,8 @@ def _generate_df():
     stats["monthly_weights"] = gfd.extend_monthly_weights(stats)
     rng = np.random.default_rng(gfd.SEED)
     dims = gfd.build_dimensions(rng)
-    return gfd.generate_rows(stats, dims, rng)
+    df = gfd.generate_rows(stats, dims, rng)
+    return gfd._apply_volume_scale(df)
 
 
 @pytest.fixture(scope="module")
@@ -117,3 +118,31 @@ def test_validate_passes_on_generated_frame(df):
     # Exercises validate() end-to-end, including all five planted storylines
     # and the broker/date/column/win-rate invariants in one shot.
     gfd.validate(df)
+
+
+def test_volume_scale_lands_top_customer_in_the_millions(storyline_frame):
+    # Sanity-check the post-hoc VOLUME_SCALE multiply (see
+    # _apply_volume_scale): Maersk's largest annual VOLUME_TONS aggregate
+    # should read in the low tens of millions of tons for the "Sanitized
+    # Data" demo presentation, not the hundreds of thousands raw generation
+    # produces before scaling.
+    m = storyline_frame[storyline_frame["CUSTOMER_NAME"] == "Maersk"]
+    vol_2025 = m.loc[m["YEAR"] == 2025, "VOLUME_TONS"].sum()
+    assert 5_000_000 < vol_2025 < 20_000_000
+
+
+def test_apply_volume_scale_only_multiplies_volume_not_gp():
+    stats = gfd._normalize_stats(gfd.SEED_STATS)
+    stats = dict(stats)
+    stats["monthly_weights"] = gfd.extend_monthly_weights(stats)
+    rng = np.random.default_rng(gfd.SEED)
+    dims = gfd.build_dimensions(rng)
+    raw = gfd.generate_rows(stats, dims, rng)
+    scaled = gfd._apply_volume_scale(raw)
+
+    pd.testing.assert_series_equal(scaled["GROSS_PROFIT"], raw["GROSS_PROFIT"])
+    won = raw["WON_FLAG"] == 1
+    expected = (raw.loc[won, "VOLUME_TONS"] * gfd.VOLUME_SCALE).round(2)
+    assert (scaled.loc[won, "VOLUME_TONS"] == expected).all()
+    # Lost rows are already 0 tons, so scaling is a no-op for them.
+    assert (scaled.loc[~won, "VOLUME_TONS"] == 0).all()

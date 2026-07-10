@@ -184,7 +184,10 @@ with tabs[0]:
                     ytd_m = metrics.get('ytd') or {}
 
                     st.markdown('<div class="section-header">📈 Key Metrics</div>', unsafe_allow_html=True)
-                    st.caption(f"Comparing {py_label} vs {ytd_label} — source: {TABLE_FQN}")
+                    if DEPLOY_MODE == "demo":
+                        st.caption(f"Comparing {py_label} vs {ytd_label} — Sanitized Data")
+                    else:
+                        st.caption(f"Comparing {py_label} vs {ytd_label} — source: {TABLE_FQN}")
 
                     def _fmt_int(v):
                         try:
