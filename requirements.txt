@@ -21,3 +21,8 @@ markdown
 weasyprint
 boto3
 
+# Demo mode (DEPLOY_MODE=demo)
+openai
+duckdb
+python-dotenv
+

@@ -8,6 +8,7 @@ import pandas as pd
 import base64
 
 from auth import check_auth
+from config import DEPLOY_MODE
 from snowflake_client import (
     get_snowflake_session,
     get_all_company_names,
@@ -17,7 +18,11 @@ from snowflake_client import (
 from agents.researcher import agent_researcher
 from agents.contextualizer import agent_contextualizer
 from agents.strategist import agent_strategist
-from pdf_generator import generate_pdf
+try:
+    from pdf_generator import generate_pdf
+except Exception:  # WeasyPrint native libraries unavailable; Markdown fallback below
+    def generate_pdf(*args, **kwargs):
+        return None
 
 
 st.set_page_config(layout="wide", page_title="Sales Intel")
@@ -27,14 +32,25 @@ st.set_page_config(layout="wide", page_title="Sales Intel")
 # =========================================================================
 authenticated, user_name, roles = check_auth()
 
+if DEPLOY_MODE == "demo":
+    from email_gate import require_email
+    from guardrails import is_locked, LOCKOUT_TEXT
+    require_email()
+    if is_locked():
+        st.error(LOCKOUT_TEXT)
+        st.stop()
+
 # =========================================================================
 # SNOWFLAKE SESSION
 # =========================================================================
 try:
     session = get_snowflake_session()
 except Exception as e:
-    st.error(f"Failed to connect to Snowflake: {e}")
-    st.info("Check your credentials in config.py (DEPLOY_MODE=local) or AWS Secrets Manager (DEPLOY_MODE=aws).")
+    if DEPLOY_MODE == "demo":
+        st.error("Demo data is unavailable. Please try again later.")
+    else:
+        st.error(f"Failed to connect to Snowflake: {e}")
+        st.info("Check your credentials in config.py (DEPLOY_MODE=local) or AWS Secrets Manager (DEPLOY_MODE=aws).")
     st.stop()
 
 
@@ -318,7 +334,10 @@ with tabs[0]:
                             unsafe_allow_html=True,
                         )
                 except Exception as e:
-                    st.error(f"An error occurred: {e}")
+                    if DEPLOY_MODE == "demo":
+                        st.error("Something went wrong while generating this analysis. Please try again.")
+                    else:
+                        st.error(f"An error occurred: {e}")
 
     
     # =========================================================================
@@ -330,6 +349,12 @@ with tabs[0]:
         if company_name == "":
             st.warning("Please type an Account name.")
         else:
+            if DEPLOY_MODE == "demo":
+                from guardrails import gate_new_account
+                _allowed, _gate_msg = gate_new_account(company_name)
+                if not _allowed:
+                    st.error(_gate_msg)
+                    st.stop()
             try:
                 agent_results = {}
 
@@ -407,7 +432,10 @@ with tabs[0]:
                     )
                 
             except Exception as e:
-                st.error(f"An error occurred: {e}")
+                if DEPLOY_MODE == "demo":
+                    st.error("Something went wrong while generating this analysis. Please try again.")
+                else:
+                    st.error(f"An error occurred: {e}")
     
     elif account_lookup == "Select Account Type":
         st.info("👆 Please select an Account Type to begin.")
