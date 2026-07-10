@@ -9,7 +9,7 @@ For EXISTING accounts: Uses Snowflake data + Cortex (unchanged).
 import json
 from datetime import datetime, timedelta
 from perplexity import Perplexity
-from config import PERPLEXITY_API_KEY
+from config import DEPLOY_MODE, PERPLEXITY_API_KEY
 from snowflake_client import call_cortex_complete, FIELD_DICTIONARY, TABLE_FQN
 from agents.schemas import operational_profile
 
@@ -189,6 +189,81 @@ def _operational_profile_to_data_context(data):
 
 
 # ================================================================
+# DEMO MODE — OFFLINE STAND-IN (New accounts only, no Perplexity/web)
+# ================================================================
+# Provider-neutral adaptation of the Maritime Operational Profile prompt in
+# plan-prompts.md, rewritten for a single general-knowledge LLM call (no
+# web search, no JSON schema). The output is formatted to match the same
+# "### SOURCE: ... (Maritime Profile)" section labels that
+# _operational_profile_to_data_context() emits from the live Perplexity
+# path, so the downstream Operational Architect prompt sees an identically
+# shaped data-context block either way.
+
+def _standin_operational_profile_prompt(company_name):
+    return f"""
+ROLE: Senior marine/bunker fuel business intelligence analyst specializing in
+commercial shipping fleet research, working from general knowledge only (no
+web search, no registry lookups).
+
+TASK: Using only your general knowledge, produce a maritime operational
+profile for {company_name}.
+
+SCOPE: Cover what you know about:
+
+1. VOYAGE INFORMATION: What kind of voyage operations does {company_name}
+   conduct? Container shipping, dry bulk, tanker, RoRo, cruise, etc. Route
+   types (coastal, deep-sea, transoceanic, regional). Approximate voyage
+   frequency. Operational patterns (seasonal peaks, liner services, tramp
+   shipping).
+2. VESSEL TYPES: What vessels does {company_name} typically operate or
+   manage? Vessel classes (e.g., Panamax, Suezmax, VLCC, Capesize) and
+   categories (container ship, bulk carrier, oil tanker, ferry, offshore).
+3. PREFERRED PORTS: What ports or regions does {company_name} typically
+   use? Home base / headquarters region, frequent destinations or regional
+   hubs.
+
+RULES:
+- Lens: marine fuel and shipping services.
+- Be direct and concise.
+- Use only your general knowledge; where you lack specific knowledge of this
+  company, write the exact string "Not available" rather than inventing
+  specifics.
+- Do NOT invent specific vessel IMO numbers - you have no registry access.
+  Always write "Not available" for that field.
+- Place strategic interpretations in an Inferred Points list.
+- List anything you could not determine in a Missing Data list.
+
+OUTPUT (Markdown, formatted exactly like this):
+### SOURCE: BUILT-IN KNOWLEDGE (Maritime Profile)
+- Operational Overview: <text or "Not available">
+- Route Types: <text or "Not available">
+- Voyage Frequency: <text or "Not available">
+- Operational Patterns: <text or "Not available">
+- Vessel Types:
+  * <type_name> (<category>) - <typical_use>
+  * ...
+- Vessel IMO Numbers: Not available (no registry access in offline mode)
+- Preferred Ports:
+  * <port_name or region> (<usage_context>)
+  * ...
+- Inferred Points:
+  * <bullet>
+- Missing Data:
+  * <bullet>
+"""
+
+
+def _standin_operational_profile(company_name):
+    """Offline stand-in for the New-account Perplexity research call: NO
+    Perplexity, NO web access. One call_openai_complete call producing the
+    same section-labeled markdown shape the live path produces."""
+    from openai_client import call_openai_complete
+
+    profile_md = call_openai_complete(_standin_operational_profile_prompt(company_name))
+    return "\n" + profile_md
+
+
+# ================================================================
 # MAIN AGENT FUNCTION
 # ================================================================
 
@@ -223,6 +298,13 @@ Comparison periods: {py_label} vs {ytd_label}.
 - Top 5 ports by volume ({py_label}): {json.dumps(ports.get('prior_year', []), default=str)}
 - Top 5 ports by volume ({ytd_label}): {json.dumps(ports.get('ytd', []), default=str)}
 """
+    elif DEPLOY_MODE == "demo":
+        # NEW ACCOUNT, DEMO MODE: offline OpenAI-only stand-in.
+        # Research is fixed at demo time (see agents/researcher.py) —
+        # Perplexity is never called while the demo app is running.
+        print(f"[Contextualizer] New account (demo mode) — offline operational profile for {company_name}...")
+        data_context = _standin_operational_profile(company_name)
+        print(f"[Contextualizer] Offline operational profile complete for {company_name}")
     else:
         # NEW ACCOUNT: search Perplexity for operational profile
         print(f"[Contextualizer] New account detected — searching Perplexity for {company_name}...")

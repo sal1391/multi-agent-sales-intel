@@ -91,8 +91,14 @@ and no Auth0 tenant:
   Snowflake Cortex normally occupies. The provider is never named in the UI,
   in agent output, or in error messages; failures collapse to a generic
   "temporarily unavailable" notice instead of a stack trace.
-- **Research** — Agent 2 still runs live web research through Perplexity,
-  exactly as in `local`/`aws` mode.
+- **Research** — fixed at demo build time, not run live. Research for the
+  three flagship dropdown companies (Maersk, MSC, Hapag-Lloyd) is pre-baked
+  from real Perplexity + OpenAI research, captured once via
+  `python scripts/bake_research.py` and committed to `demo_research/*.md`.
+  Every other company — any other dropdown entry, or a New-account lookup —
+  is answered by an offline, OpenAI-only analyst working from general
+  knowledge, with no web search. Perplexity is never called while the demo
+  app is running; it's only used by the bake script.
 
 ### Run it locally
 
@@ -101,19 +107,23 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Set `OPENAI_API_KEY` and `PERPLEXITY_API_KEY` in your environment (or in a
-`.env` file — `python-dotenv` loads it automatically) before starting the
-app. No Snowflake credentials or Auth0 setup are needed in demo mode.
+Set `OPENAI_API_KEY` in your environment (or in a `.env` file —
+`python-dotenv` loads it automatically) before starting the app.
+`PERPLEXITY_API_KEY` is **not** needed to run the demo — it's only used by
+`scripts/bake_research.py`, if you want to refresh the baked research files.
+No Snowflake credentials or Auth0 setup are needed in demo mode.
 
 ### Deploy to Railway
 
 1. Connect this GitHub repo to a new Railway service.
 2. Set environment variables:
    - `OPENAI_API_KEY` — required.
-   - `PERPLEXITY_API_KEY` — required.
    - `OPENAI_MODEL` — optional, defaults to `gpt-4o-mini`.
    - `DEPLOY_MODE=demo` — optional (demo is already the default), but worth
      setting explicitly so the mode is visible in the Railway dashboard.
+   - `PERPLEXITY_API_KEY` — **not** set on Railway. It's only needed offline,
+     by `scripts/bake_research.py`, to (re)generate the committed
+     `demo_research/*.md` files before you deploy.
 3. Deploy. This is a single service with no database add-on — `railway.toml`
    and `nixpacks.toml` in this repo configure the build and start command,
    so no Dockerfile is needed.

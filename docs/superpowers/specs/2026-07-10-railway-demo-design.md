@@ -14,6 +14,17 @@
 > by `generate_fake_data.py`. Strike-2 lockout disables the **whole session** ("if
 > someone tries to jailbreak it, shut it down"). This file describes the as-built design.
 
+> **Revision note 2.** Later the same day, the user re-amended research back to baked:
+> **research is fixed at demo time** — Perplexity must never be called while the demo
+> app is running. The three flagship dropdown companies (Maersk, MSC, Hapag-Lloyd) get
+> pre-baked research (live Perplexity + OpenAI, captured once by
+> `scripts/bake_research.py` and committed to `demo_research/*.md`); every other company
+> name gets an offline, general-knowledge-only OpenAI stand-in (no web search), instructed
+> to write "Not available" rather than invent facts. This requires small, targeted edits
+> to `agents/researcher.py` and `agents/contextualizer.py` — the only edits ever made to
+> `agents/` across both revisions. This section and the rest of the file are updated to
+> reflect that final design; text describing "Perplexity stays live" below is superseded.
+
 ## Goal
 
 Make the app fully runnable as a **demo** — locally and on Railway — with **no Snowflake
@@ -32,18 +43,24 @@ own additions. Specifically:
 2. **OpenAI** replaces Snowflake Cortex as the synthesis LLM. The provider is **hidden
    from users** — no message, answer, or error may reveal ChatGPT/OpenAI. Key from
    `OPENAI_API_KEY`, model from `OPENAI_MODEL` (default `gpt-4o-mini`).
-3. **Perplexity research stays live** — the researcher's 4 web-research calls and the
-   contextualizer's prospect research run exactly as in `local`/`aws` mode, via
-   `PERPLEXITY_API_KEY`. Zero edits to any file in `agents/`.
+3. **Research is fixed at demo time** (superseded by Revision note 2 above) — the
+   researcher's web research and the contextualizer's prospect research are no longer
+   live in demo mode. The three flagship dropdown companies (Maersk, MSC, Hapag-Lloyd)
+   serve pre-baked research captured once by `scripts/bake_research.py` (live
+   Perplexity + OpenAI, run offline; output committed to `demo_research/*.md`); every
+   other company name gets an offline OpenAI-only stand-in (general-knowledge prompts,
+   no web search). Perplexity is never called while the demo app is running — only by
+   the bake script.
 4. **Strict guardrails** wrap the app's only free-text input (New-account company name)
    and every OpenAI response; jailbreak or off-topic attempts are blocked and a second
    strike locks the entire session.
 5. **Email gate**: users must enter a format-valid email before using the app; entries
    are logged to stdout (visible in Railway logs) and `demo_logs/entries.jsonl`.
 6. **Railway-ready**: single service, `requirements.txt` + `railway.toml` +
-   `nixpacks.toml`, variables `OPENAI_API_KEY`, `PERPLEXITY_API_KEY`,
-   `OPENAI_MODEL` (optional), `DEPLOY_MODE=demo` (explicit; also the default),
-   no database add-on.
+   `nixpacks.toml`, variables `OPENAI_API_KEY`, `OPENAI_MODEL` (optional),
+   `DEPLOY_MODE=demo` (explicit; also the default), no database add-on.
+   `PERPLEXITY_API_KEY` is **not** a Railway variable — it's used offline only,
+   by `scripts/bake_research.py`.
 
 ## Non-goals
 
@@ -70,12 +87,14 @@ User
     dropdown (32 real shipping lines, driven by demo_data/sales_actuals.csv)
       → metrics + top-5 ports : LocalSession → in-process DuckDB (SQL runs verbatim)
       → Agent 1 Contextualizer: OpenAI synthesis over the fake metrics
-      → Agent 2 Researcher    : LIVE Perplexity research → OpenAI synthesis
+      → Agent 2 Researcher    : baked research (3 flagship cos) or offline OpenAI
+                                 stand-in (everyone else) → OpenAI synthesis
       → Agent 3 Strategist    : OpenAI synthesis
       → PDF export (unchanged; Markdown fallback if WeasyPrint unavailable)
 
   New account (free-text company name — guardrailed):
-      → Agent 1 (Perplexity prospect research → OpenAI), Agent 2, Agent 3 as above
+      → Agent 1 (offline OpenAI stand-in prospect profile; no Perplexity),
+        Agent 2 (baked or offline stand-in research, same as above), Agent 3 as above
 ```
 
 A deployment mode **`DEPLOY_MODE=demo`** (the new default) routes synthesis LLM calls
@@ -202,8 +221,10 @@ email, input, layer) to stdout + `demo_logs/violations.jsonl` (strikes) or
   `libgdk-pixbuf2.0-0`, `libffi-dev`, `shared-mime-info`, `fonts-dejavu-core` so PDF
   export works on Railway (guarded-import Markdown fallback as safety net).
 - **`.python-version`**: 3.11 (matches CI; snowpark wheel availability).
-- **Railway variables:** `OPENAI_API_KEY` (required), `PERPLEXITY_API_KEY` (required),
-  `OPENAI_MODEL` (optional), `DEPLOY_MODE=demo` (explicit, though demo is the default).
+- **Railway variables:** `OPENAI_API_KEY` (required), `OPENAI_MODEL` (optional),
+  `DEPLOY_MODE=demo` (explicit, though demo is the default). `PERPLEXITY_API_KEY` is
+  **not** set on Railway — it's a bake-time-only variable used by
+  `scripts/bake_research.py` (see the Decisions log "Research" row).
 - Deploy by connecting Railway to the GitHub repo.
 
 ### Local dev
@@ -213,9 +234,10 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Demo mode is the default; `OPENAI_API_KEY` (and `PERPLEXITY_API_KEY` for live
-research) are read from the environment or a `.env`. No Snowflake, Auth0, or Docker.
-Identical code path to Railway.
+Demo mode is the default; `OPENAI_API_KEY` is read from the environment or a `.env`.
+`PERPLEXITY_API_KEY` is only needed if you're re-running `scripts/bake_research.py`
+to refresh the baked research files — not to run the demo itself. No Snowflake,
+Auth0, or Docker. Identical code path to Railway.
 
 ## Testing
 
@@ -246,15 +268,24 @@ Pytest under `tests/unit` (offline, keyless; run by CI alongside `ruff check .`)
 New-account guardrail hook; demo-generic error messages), `requirements.txt`,
 `.env.example`, `.gitignore`, `README.md`.
 
-**Untouched:** all of `agents/` (researcher, contextualizer, strategist, orchestrator,
-schemas), `auth.py`, `pdf_generator.py`, all UI markup/styling in `app.py`,
+**Edited (Revision note 2):** `agents/researcher.py` (baked-file lookup +
+offline OpenAI stand-in, replacing the live Perplexity call in demo mode only —
+`local`/`aws` modes are unchanged), `agents/contextualizer.py` (offline OpenAI
+stand-in for the New-account operational profile in demo mode only).
+
+**New (Revision note 2):** `scripts/bake_research.py` (offline bake of live
+Perplexity + OpenAI research into `demo_research/*.md`), `demo_research/*.md`
+(committed baked research for the 3 flagship companies), `tests/unit/test_researcher_demo.py`.
+
+**Untouched:** `agents/strategist.py`, `agents/orchestrator.py`, `agents/schemas/`,
+`auth.py`, `pdf_generator.py`, all UI markup/styling in `app.py`,
 `.streamlit/`, `assets/`, existing tests.
 
 ## Decisions log
 
 | Decision | Choice | Why |
 |---|---|---|
-| Research | Perplexity live in demo (user amendment) | "Perplexity does the research, OpenAI analyzes the summaries and KPIs"; research stays genuinely web-sourced and any company can be looked up. |
+| Research | Baked for 3 flagship companies + offline OpenAI stand-in for everyone else (user re-amendment) | Fix research at demo time — Perplexity must never run inside the demo app. `scripts/bake_research.py` captures live Perplexity + OpenAI research once for Maersk/MSC/Hapag-Lloyd into committed `demo_research/*.md`; any other company name gets a general-knowledge-only OpenAI stand-in, explicitly instructed to say "Not available" rather than invent facts. |
 | Synthesis | OpenAI behind the Cortex seam | One-function swap covers all three agents; provider fully concealed. |
 | Dropdown contents | 32 real shipping lines | Real names make live research and OpenAI synthesis realistic; transaction data is still fully fake. |
 | Data source | TM1 workbook as structural seed → committed CSV | User requirement ("use this as the test data … load into the github"); deterministic, inspectable, no workbook needed at runtime; real employee/entity names excluded by validated rule. |

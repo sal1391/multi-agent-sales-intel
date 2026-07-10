@@ -10,16 +10,56 @@ Runs 3 sequential Perplexity searches:
 Returns combined markdown matching the original Agent 1 output template.
 """
 import json
+import os
+import re
 from datetime import datetime, timedelta
 from perplexity import Perplexity
-from config import PERPLEXITY_API_KEY
+from config import DEPLOY_MODE, PERPLEXITY_API_KEY
 from agents.schemas import market_position, strategic_profile, sustainability_esg, latest_news_partnerships
 from snowflake_client import call_cortex_complete
 
 
+# ================================================================
+# DEMO MODE — BAKED RESEARCH / OFFLINE STAND-IN
+# ================================================================
+# demo_research/<slug>.md holds pre-baked live-research output for the
+# demo's flagship companies (see scripts/bake_research.py, which is the
+# only place that calls _run_live_research in demo mode). Any other
+# company name in demo mode falls back to _standin_research() below — an
+# offline, OpenAI-only analyst with no web access. Perplexity is never
+# called while the demo app itself is running.
+DEMO_RESEARCH_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "demo_research"
+)
+
+
+def _slug(name: str) -> str:
+    """Normalize a company name into a filesystem-safe slug.
+
+    "Hapag-Lloyd" -> "hapag-lloyd", " MSC " -> "msc", '"K" Line' -> "k-line".
+    """
+    return re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+
+
+def _load_baked(company_name):
+    """Return the baked research markdown for company_name, or None if missing/unreadable."""
+    path = os.path.join(DEMO_RESEARCH_DIR, f"{_slug(company_name)}.md")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
 def _get_client():
-    """Create Perplexity API client."""
-    return Perplexity(api_key=PERPLEXITY_API_KEY)
+    """Create Perplexity API client. Returns None if construction fails
+    (e.g. a missing/invalid key), so callers can degrade gracefully
+    instead of raising."""
+    try:
+        return Perplexity(api_key=PERPLEXITY_API_KEY)
+    except Exception as e:
+        print(f"Perplexity client init error: {e}")
+        return None
 
 
 def _call_perplexity(client, prompt, schema, model, search_context_size="medium", max_tokens=6000):
@@ -27,6 +67,8 @@ def _call_perplexity(client, prompt, schema, model, search_context_size="medium"
     Call Perplexity API with structured JSON output.
     Returns parsed JSON dict on success, None on failure.
     """
+    if client is None:
+        return None
     try:
         response = client.chat.completions.create(
             model=model,
@@ -464,14 +506,19 @@ Produce only the final report for {company_name} following the section structure
 
 
 # ================================================================
-# PUBLIC API
+# LIVE RESEARCH PIPELINE (local/aws modes, and scripts/bake_research.py)
 # ================================================================
 
-def agent_researcher(session, company_name):
+def _run_live_research(session, company_name):
     """
-    Agent 1: Run 4 Perplexity calls sequentially, then synthesise
-    the combined output via Snowflake Cortex.
-    Returns only the Cortex summary + confidence check.
+    Run 4 Perplexity calls sequentially, then synthesise the combined
+    output via Snowflake Cortex. Returns only the Cortex summary +
+    confidence check.
+
+    This is the LIVE pipeline: it makes real Perplexity API calls. In demo
+    mode it is never called by the running app — only by
+    scripts/bake_research.py, offline, to produce the committed
+    demo_research/*.md files.
     """
     client = _get_client()
 
@@ -500,3 +547,231 @@ def agent_researcher(session, company_name):
     sections.append("* Confidence Score: " + conf + " (" + str(available) + "/4 research calls succeeded)")
 
     return "\n".join(sections)
+
+
+# ================================================================
+# DEMO MODE — OFFLINE STAND-IN PROMPTS (no Perplexity, no web)
+# ================================================================
+# Provider-neutral adaptations of the prompts in plan-prompts.md, rewritten
+# so a single general-knowledge LLM call (no web search, no JSON schema)
+# produces the same markdown shape the *_to_md() converters above produce.
+
+def _standin_esg_prompt(company_name):
+    return f"""
+ROLE: Senior marine/bunker fuel BI analyst for commercial shipping.
+
+TASK: Using only your general knowledge (no web search), produce a structured
+Sustainability & ESG report for {company_name} (section "3. Sustainability and ESG").
+
+SCOPE - cover each of the following:
+- Carbon/Sustainability Goals: public commitments to sustainability, carbon
+  neutrality, or ESG initiatives. Include Carbon Credits and EU ETS mentions.
+- Marine Biofuels / Alternative Fuels Adoption: any mention of alternative
+  marine fuels (biofuels, LNG, methanol, ammonia), pilot programs, or carbon
+  offsets. If no shipping-specific data exists, surface corporate-wide
+  sustainability data to support a repositioning conversation.
+- Corporate-Wide Initiatives: broad company actions (going-green campaigns,
+  corporate-wide carbon reduction targets). Corporate goals trickle down to
+  fleet operations.
+- Executive Public Stance: CEO/leadership statements on environmental impact.
+  Reference IMO 2020/2030, CII, EEXI, EU ETS, or Carbon Credits where relevant.
+- Strategic Opportunity: alignment gaps where maritime solutions (offsets,
+  EU ETS compliance, fuel efficiency tools) could help fleet operations match
+  the corporate sustainability mandate.
+
+RULES:
+- Lens: marine fuels and shipping services.
+- Be direct and concise.
+- Use only your general knowledge; where you lack specific knowledge of this
+  company, write the exact string "Not available" rather than inventing
+  specifics.
+- Prefix interpretations with: Inferred:
+
+OUTPUT (Markdown):
+## 3. Sustainability & ESG
+### 3A. Carbon & Sustainability Goals
+### 3B. Marine Biofuels / Alternative Fuels Adoption
+### 3C. Corporate-Wide Initiatives
+### 3D. Executive Public Stance
+### 3E. Strategic Opportunity (Marine-fuel lens)
+"""
+
+
+def _standin_market_prompt(company_name):
+    return f"""
+You are a senior strategic profile analyst.
+Provide decision-ready competitive intelligence to sales teams, using only
+your general knowledge (no web search).
+
+TASK:
+Produce a structured strategic market position report for {company_name}.
+Cover:
+
+1. Corporate Identity - official Vision and Mission statements (or deduced).
+2. Industry Classification - specific sector and primary business activity.
+3. Market Position - strategic role (Market Leader, Challenger, Niche,
+   Disruptor, etc.) and approximate standing / market share.
+4. Competitive Landscape - main competitors and their differentiation /
+   value proposition.
+
+RULES:
+- Be direct, concise, and professional. No filler.
+- Do NOT use prefixes like "Inferred:" or "Unknown:" inside the main data fields.
+- Use only your general knowledge; where you lack specific knowledge of this
+  company, write "Not available" rather than inventing specifics, and list
+  it under "Unknowns".
+- If you make a strategic interpretation or deduction, list it under
+  "Inferred Points".
+
+OUTPUT (Markdown):
+## 1. Market Position & Industry Context
+* Industry Classification: <sector>. Primary business: <activity>
+* Market Position: <role>. Standing: <approx market share / standing>
+* Competitive Landscape: Main competitors: <comma list>. Differentiation: <text>
+* Vision: <statement or omit>
+* Mission: <statement or omit>
+
+### Inferred Points
+- <bullet list>
+
+### Unknowns
+- <bullet list>
+"""
+
+
+def _standin_profile_prompt(company_name):
+    return f"""
+ROLE:
+You are a senior strategic profile analyst.
+Provide decision-ready competitive intelligence to marine fuel sales teams,
+using only your general knowledge (no web search).
+
+TASK:
+Produce a structured strategic profile report for {company_name}. Cover:
+
+- Business Model: key value propositions; key products/services; primary
+  target audience.
+- Financials: revenue model; growth status (expanding, stable, contracting)
+  and rationale; specific revenue figures or growth percentages for the
+  previous year, current year, and projected next year, if known.
+- Market Presence: specific regions, countries, or markets they operate in;
+  primary competitors.
+
+RULES:
+- Be direct, concise, and professional. No filler.
+- Use only your general knowledge; where you lack specific knowledge of this
+  company, write the exact string "Not available" rather than inventing
+  specifics.
+- Place strategic interpretations, deductions, or educated guesses under
+  "Inferred Points".
+- List specific metrics or fields you could not find under "Missing Data".
+
+OUTPUT (Markdown):
+## 2. Strategic Profile
+* Business Model: <value propositions, semicolon-separated>
+* Key Products/Services: <comma-separated list>
+* Target Audience: <text>
+* Growth Trajectory: <growth status> - <rationale>
+* Revenue Model: <text>
+* Geographic Footprint: <comma-separated regions>
+
+### Financial Figures
+- Previous year revenue / growth: <figure or "Not available">
+- Current year revenue / growth: <figure or "Not available">
+- Projected next year: <figure or "Not available">
+
+### Inferred Points
+- <bullets>
+
+### Missing Data
+- <bullets>
+"""
+
+
+def _standin_news_prompt(company_name):
+    return f"""
+ROLE: Senior maritime business intelligence analyst, working from general
+knowledge only (no web search, no access to current news).
+
+TASK: Produce a "Notable News and Partnerships" report for {company_name}
+(section 4) based only on what you already know.
+
+SCOPE:
+- Notable News: major corporate announcements, product launches, leadership
+  changes, or market expansion that you have general knowledge of. Do not
+  claim anything is "recent" or "latest" - you have no access to current
+  events.
+- Strategic Partnerships: mergers, acquisitions, joint ventures, key vendor
+  or supplier partnerships you are aware of. Prioritize maritime-related
+  partnerships if applicable.
+
+RULES:
+- Be direct and concise.
+- Use only your general knowledge; where you lack specific knowledge of this
+  company, write the exact string "Not available" rather than inventing
+  specifics or dates.
+- Never invent a specific date you are not confident of.
+
+OUTPUT (Markdown):
+## 4. Notable News & Partnerships
+### 4A. Notable News
+- <approximate period, or "Not available"> - <headline> - <one-sentence summary>
+
+### 4B. Strategic Partnerships
+- <approximate period, or "Not available"> - <partner / counterparty> -
+  <type: M&A / JV / vendor / supplier> - <one-sentence summary> -
+  <maritime relevance: yes/no + why>
+"""
+
+
+def _standin_research(company_name):
+    """
+    Offline stand-in for _run_live_research(): NO Perplexity, NO web access.
+    Runs the same four research areas through call_openai_complete using
+    general-knowledge prompts, then reuses _summarize_with_cortex() for the
+    synthesis step (call_cortex_complete already routes to OpenAI in demo
+    mode). Used for any demo-mode company that has no baked research file.
+    """
+    from openai_client import call_openai_complete
+
+    esg_md = call_openai_complete(_standin_esg_prompt(company_name))
+    market_md = call_openai_complete(_standin_market_prompt(company_name))
+    profile_md = call_openai_complete(_standin_profile_prompt(company_name))
+    news_md = call_openai_complete(_standin_news_prompt(company_name))
+
+    # session is None here: _summarize_with_cortex -> call_cortex_complete
+    # only forwards session to the Snowflake branch, which demo mode never
+    # takes (it routes straight to call_openai_complete).
+    summary = _summarize_with_cortex(None, company_name, market_md, profile_md, esg_md, news_md)
+
+    sections = []
+    sections.append(summary or "Summary not available.")
+    sections.append("")
+    sections.append("## Confidence Check")
+    sections.append("* Data Freshness: built-in knowledge base")
+    sections.append("* Confidence Score: Medium (offline knowledge, no live web research)")
+
+    return "\n".join(sections)
+
+
+# ================================================================
+# PUBLIC API
+# ================================================================
+
+def agent_researcher(session, company_name):
+    """
+    Agent 2 (Researcher). In demo mode, research is fixed rather than live:
+      - a baked demo_research/<slug>.md file, if one exists for this
+        company (see scripts/bake_research.py), is returned verbatim;
+      - otherwise an offline OpenAI-only stand-in analyst runs (no
+        Perplexity, no web access).
+    Perplexity is never called while the demo app is running.
+
+    In local/aws modes, runs the original live Perplexity + Cortex pipeline.
+    """
+    if DEPLOY_MODE == "demo":
+        baked = _load_baked(company_name)
+        if baked is not None:
+            return baked
+        return _standin_research(company_name)
+    return _run_live_research(session, company_name)
