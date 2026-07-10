@@ -1,8 +1,0 @@
-[phases.setup]
-# WeasyPrint loads pango/gobject/harfbuzz via ctypes. The Nixpacks python runs
-# against Nix glibc, so these libraries must come from Nix (apt-installed .so
-# files fail to load: "WeasyPrint could not import some external libraries").
-nixPkgs = ["...", "glib", "pango", "harfbuzz", "fontconfig", "freetype"]
-nixLibs = ["glib", "pango", "harfbuzz", "fontconfig", "freetype"]
-# Font/MIME data files are fine from apt (no linking involved).
-aptPkgs = ["shared-mime-info", "fonts-dejavu-core"]

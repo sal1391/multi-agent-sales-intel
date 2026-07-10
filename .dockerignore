@@ -1,0 +1,10 @@
+.git
+.superpowers
+demo_logs
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.env
+docs
