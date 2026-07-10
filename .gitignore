@@ -1,6 +1,9 @@
 # Credentials / secrets
 .env
 
+# Demo mode runtime logs
+demo_logs/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -10,3 +13,6 @@ __pycache__/
 # IDE
 .vscode/
 .idea/
+
+# Controller scratch (SDD ledger)
+.superpowers/

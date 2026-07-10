@@ -13,8 +13,11 @@ Metrics are computed side-by-side for two periods:
 from datetime import date
 import streamlit as st
 import pandas as pd
-from snowflake.snowpark import Session
-from config import SNOWFLAKE_CONNECTION, SNOWFLAKE_TABLE
+try:
+    from snowflake.snowpark import Session
+except ImportError:  # demo mode does not require snowpark
+    Session = None
+from config import DEPLOY_MODE, SNOWFLAKE_CONNECTION, SNOWFLAKE_TABLE
 
 
 TABLE_FQN = (
@@ -135,11 +138,19 @@ def _coalesce_metrics(row):
 # =============================================================================
 def get_snowflake_session():
     """Create and return a Snowpark Session from config credentials."""
+    if DEPLOY_MODE == "demo":
+        from local_session import get_local_session
+        return get_local_session()
+    if Session is None:
+        raise RuntimeError("snowflake-snowpark-python is required for DEPLOY_MODE=local/aws")
     return Session.builder.configs(SNOWFLAKE_CONNECTION).create()
 
 
 def call_cortex_complete(session, prompt, model="claude-sonnet-4-5"):
     """Call Snowflake Cortex LLM completion."""
+    if DEPLOY_MODE == "demo":
+        from openai_client import call_openai_complete
+        return call_openai_complete(prompt)
     safe_prompt = _sql_escape(prompt)
     query = f"""SELECT snowflake.cortex.complete('{model}', '{safe_prompt}') AS CONTENT"""
     result = session.sql(query).to_pandas()["CONTENT"][0]
