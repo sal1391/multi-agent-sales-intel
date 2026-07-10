@@ -10,13 +10,26 @@ Set them as Windows system environment variables (or in a .env file).
 import os
 import json
 
+# Load a local .env file if python-dotenv is installed (demo/local convenience).
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 # ============================================================
-# DEPLOYMENT MODE: Set to "local" for testing, "aws" for prod
+# DEPLOYMENT MODE: "demo" (default) | "local" | "aws"
 # ============================================================
-DEPLOY_MODE = os.getenv("DEPLOY_MODE", "local")   # "local" | "aws"
-# Default to True ONLY if aws, False if local
+DEPLOY_MODE = os.getenv("DEPLOY_MODE", "demo")
+# Default to True ONLY if aws, False if demo/local
 AUTH0_ENABLED_DEFAULT = "true" if DEPLOY_MODE == "aws" else "false"
 AUTH0_ENABLED = os.getenv("AUTH0_ENABLED", AUTH0_ENABLED_DEFAULT).lower() == "true"
+
+# ============================================================
+# DEMO MODE — LLM settings (provider hidden from the UI)
+# ============================================================
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 
 # ============================================================
@@ -73,14 +86,16 @@ def _build_auth0_config():
 # ============================================================
 # RESOLVED CONFIG — Used by the rest of the app
 # ============================================================
-if DEPLOY_MODE == "local":
-    SNOWFLAKE_CONNECTION = _LOCAL_SNOWFLAKE_CONNECTION
-    PERPLEXITY_API_KEY = _LOCAL_PERPLEXITY_API_KEY
-    AUTH0_CONFIG = {}  # Not used when AUTH0_ENABLED = False
-else:
+if DEPLOY_MODE == "aws":
     SNOWFLAKE_CONNECTION = _get_secret("app_secret_json")
     PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
     AUTH0_CONFIG = _build_auth0_config()
+else:
+    # "demo" and "local". Demo never opens a Snowflake connection — the
+    # connection defaults below only feed TABLE_FQN string building.
+    SNOWFLAKE_CONNECTION = _LOCAL_SNOWFLAKE_CONNECTION
+    PERPLEXITY_API_KEY = _LOCAL_PERPLEXITY_API_KEY
+    AUTH0_CONFIG = {}  # Not used when AUTH0_ENABLED = False
 
 # Auth0 role required for access
 REQUIRED_ROLE = "App:Sales"
