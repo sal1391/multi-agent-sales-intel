@@ -11,6 +11,13 @@ import re
 from datetime import datetime, timezone
 
 import guardrails
+from demo_abuse import (
+    get_client_ip,
+    is_rate_limited,
+    record_attempt,
+    render_turnstile_widget,
+    verify_turnstile,
+)
 
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 
@@ -85,15 +92,33 @@ def require_email() -> None:
         )
         st.caption("Enter your email to start the demo.")
         email = st.text_input("Email")
+        render_turnstile_widget()  # no-op unless Turnstile env vars are set
         if st.button("Start demo"):
-            if is_valid_email(email):
-                st.session_state["demo_email"] = email
-                guardrails.log_event("entries", {
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "email": email,
-                })
-                st.rerun()
-            else:
+            if not is_valid_email(email):
                 st.error("Please enter a valid email address.")
+            else:
+                ip = get_client_ip()
+                # 1. Turnstile (env-gated; passes through while disabled)
+                token = st.session_state.get("cf_turnstile_token", "")
+                if not verify_turnstile(token, ip):
+                    st.error("Verification failed. Please try again.")
+                # 2. Rate limit
+                elif is_rate_limited(ip):
+                    guardrails.log_event("rate_limited", {
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "ip": ip,
+                    })
+                    st.error("Too many attempts from your network. "
+                             "Please try again later.")
+                # 3. Accept + log (unchanged logging, now with IP)
+                else:
+                    record_attempt(ip)
+                    st.session_state["demo_email"] = email
+                    guardrails.log_event("entries", {
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "email": email,
+                        "ip": ip,
+                    })
+                    st.rerun()
 
     st.stop()
