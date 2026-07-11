@@ -125,13 +125,13 @@ No Snowflake credentials or Auth0 setup are needed in demo mode.
      by `scripts/bake_research.py`, to (re)generate the committed
      `demo_research/*.md` files before you deploy.
 3. Deploy. This is a single service with no database add-on — `railway.toml`
-   and `nixpacks.toml` in this repo configure the build and start command,
-   so no Dockerfile is needed.
+   selects the Dockerfile build, and the `Dockerfile` installs WeasyPrint's
+   native libraries and starts Streamlit on `$PORT`.
 
-PDF export relies on WeasyPrint's native libraries, which `nixpacks.toml`
+PDF export relies on WeasyPrint's native libraries, which the `Dockerfile`
 installs via `apt` on Railway. If those libraries are ever unavailable at
-runtime, the app automatically falls back to offering a Markdown download
-instead of failing.
+runtime (e.g. running locally on Windows), the app automatically falls back
+to offering a Markdown download instead of failing.
 
 ### Demo protections
 
