@@ -9,40 +9,42 @@ from __future__ import annotations
 
 import streamlit as st
 
-# One-line disclosure shown under the email input on the gate.
+# One-line disclosure shown under the Start button on the gate.
 GATE_SNIPPET = (
-    "We only use this to prevent abuse of the demo — no marketing, no tracking."
+    "We record your IP address to prevent abuse of the demo — no marketing, no tracking."
 )
 
 PRIVACY_MD = """## Privacy Notice
 
 Last updated: July 11, 2026
 
-This site hosts a set of product demos. To limit abuse, each demo asks for your
-email address before you can start. This page explains what we do with it.
+This site hosts a set of product demos. To limit abuse, we record basic technical
+information when you use a demo. This page explains what.
 
 ### What we collect
 
-- The email address you enter to start a demo.
+- Your IP address and request timestamps, recorded when you start a demo, used to
+  prevent abuse (e.g. rate-limiting, blocking bad actors).
 - Standard hosting/request logs generated automatically by our hosting provider
-  (Railway), such as IP address and request timestamps.
+  (Railway).
 
-We do not use cookies, analytics, or third-party tracking scripts on these demo
-pages.
+We do not ask for your email or any account details, and we do not use cookies,
+analytics, or third-party tracking scripts on these demo pages.
 
 ### Why we collect it
 
-Solely to prevent abuse and misuse of the demos (e.g. rate-limiting, blocking bad
-actors). We do not use your email for marketing, and we do not send you any emails.
+Solely to prevent abuse and misuse of the demos. We do not use this information
+for marketing.
 
 ### Sharing
 
-We do not sell or share your email address with third parties. It is stored only
-for the purpose described above.
+We do not sell or share this information with third parties. It is used only for
+the purpose described above.
 
 ### Retention
 
-Email addresses collected here are kept for 30 days, after which they are deleted.
+Abuse-prevention records (IP address and timestamps) are kept for 30 days, after
+which they are deleted.
 
 ### These demos
 
@@ -51,8 +53,8 @@ real, sensitive, or production data into any of them.
 
 ### Your choices
 
-You can ask us to delete your email address at any time by contacting
-carlos.salgado30@yahoo.com. We will remove it within a reasonable time.
+You can ask us about or request deletion of the technical records tied to your IP
+address at any time by contacting carlos.salgado30@yahoo.com.
 
 ### Contact
 

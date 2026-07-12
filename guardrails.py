@@ -128,7 +128,7 @@ def log_event(name: str, record: dict) -> None:
 def _log_gate_block(layer: str, text: str, state: MutableMapping) -> None:
     log_event("gate", {
         "ts": _iso_now(),
-        "email": state.get("demo_email"),
+        "ip": state.get("demo_ip"),
         "input": text[:500],
         "layer": layer,
     })
@@ -139,7 +139,7 @@ def record_violation(layer: str, text: str, state: Optional[MutableMapping] = No
     s["strikes"] = s.get("strikes", 0) + 1
     log_event("violations", {
         "ts": _iso_now(),
-        "email": s.get("demo_email"),
+        "ip": s.get("demo_ip"),
         "input": text[:500],
         "layer": layer,
     })
