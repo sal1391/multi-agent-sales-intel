@@ -18,6 +18,7 @@ from demo_abuse import (
     render_turnstile_widget,
     verify_turnstile,
 )
+from privacy import render_privacy_notice
 
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 
@@ -120,5 +121,7 @@ def require_email() -> None:
                         "ip": ip,
                     })
                     st.rerun()
+
+        render_privacy_notice()
 
     st.stop()
