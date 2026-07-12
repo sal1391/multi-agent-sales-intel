@@ -180,8 +180,8 @@ def test_gate_happy_path_returns_true_and_increments_count(monkeypatch):
     assert state["last_gated_name"] == "Acme Shipping"
 
 
-def test_violations_jsonl_rows_include_email(tmp_path):
-    state = {"demo_email": "user@example.com"}
+def test_violations_jsonl_rows_include_ip(tmp_path):
+    state = {"demo_ip": "1.2.3.4"}
     guardrails.filter_output("This is powered by OpenAI.", state=state)
 
     log_path = tmp_path / "violations.jsonl"
@@ -189,5 +189,5 @@ def test_violations_jsonl_rows_include_email(tmp_path):
     lines = log_path.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1
     row = json.loads(lines[0])
-    assert row["email"] == "user@example.com"
+    assert row["ip"] == "1.2.3.4"
     assert row["layer"] == "output_filter"

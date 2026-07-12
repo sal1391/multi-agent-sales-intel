@@ -1,9 +1,10 @@
 """
-Email gate for the Sales Intel demo.
+Start gate for the Sales Intel demo.
 
-Blocks the rest of the app until the visitor supplies an email address. That
-address is stored in session state and used to tag every guardrail
-violation log for the remainder of the session.
+Blocks the rest of the app until the visitor clicks Start. No email is
+collected — the visitor's IP is recorded on start (for abuse prevention) and
+is used to tag every guardrail violation log for the remainder of the
+session.
 """
 import base64
 import os
@@ -27,11 +28,11 @@ def is_valid_email(email: str) -> bool:
     return bool(EMAIL_RE.match(email.strip()))
 
 
-def require_email() -> None:
-    """Render an email-collection card and halt the script until answered."""
+def require_start() -> None:
+    """Render a Start card and halt the script until the visitor starts."""
     import streamlit as st
 
-    if st.session_state.get("demo_email"):
+    if st.session_state.get("demo_started"):
         return
 
     trident_b64 = None
@@ -91,36 +92,32 @@ def require_email() -> None:
             """,
             unsafe_allow_html=True,
         )
-        st.caption("Enter your email to start the demo.")
-        email = st.text_input("Email")
+        st.caption("Click Start to begin the demo.")
         render_turnstile_widget()  # no-op unless Turnstile env vars are set
         if st.button("Start demo"):
-            if not is_valid_email(email):
-                st.error("Please enter a valid email address.")
+            ip = get_client_ip()
+            # 1. Turnstile (env-gated; passes through while disabled)
+            token = st.session_state.get("cf_turnstile_token", "")
+            if not verify_turnstile(token, ip):
+                st.error("Verification failed. Please try again.")
+            # 2. Rate limit
+            elif is_rate_limited(ip):
+                guardrails.log_event("rate_limited", {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ip": ip,
+                })
+                st.error("Too many attempts from your network. "
+                         "Please try again later.")
+            # 3. Accept + log (now IP-only, no email)
             else:
-                ip = get_client_ip()
-                # 1. Turnstile (env-gated; passes through while disabled)
-                token = st.session_state.get("cf_turnstile_token", "")
-                if not verify_turnstile(token, ip):
-                    st.error("Verification failed. Please try again.")
-                # 2. Rate limit
-                elif is_rate_limited(ip):
-                    guardrails.log_event("rate_limited", {
-                        "ts": datetime.now(timezone.utc).isoformat(),
-                        "ip": ip,
-                    })
-                    st.error("Too many attempts from your network. "
-                             "Please try again later.")
-                # 3. Accept + log (unchanged logging, now with IP)
-                else:
-                    record_attempt(ip)
-                    st.session_state["demo_email"] = email
-                    guardrails.log_event("entries", {
-                        "ts": datetime.now(timezone.utc).isoformat(),
-                        "email": email,
-                        "ip": ip,
-                    })
-                    st.rerun()
+                record_attempt(ip)
+                st.session_state["demo_started"] = True
+                st.session_state["demo_ip"] = ip
+                guardrails.log_event("entries", {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ip": ip,
+                })
+                st.rerun()
 
         render_privacy_notice()
 

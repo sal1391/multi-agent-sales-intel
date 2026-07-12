@@ -33,9 +33,9 @@ st.set_page_config(layout="wide", page_title="Sales Intel")
 authenticated, user_name, roles = check_auth()
 
 if DEPLOY_MODE == "demo":
-    from email_gate import require_email
+    from email_gate import require_start
     from guardrails import is_locked, LOCKOUT_TEXT
-    require_email()
+    require_start()
     if is_locked():
         st.error(LOCKOUT_TEXT)
         st.stop()
